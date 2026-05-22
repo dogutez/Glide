@@ -7,7 +7,7 @@ import AppKit
 import ApplicationServices
 import QuartzCore
 
-enum SnapTarget: Equatable {
+enum SnapTarget: Hashable {
     case leftHalf
     case rightHalf
     case topHalf
@@ -94,14 +94,52 @@ final class WindowManager {
     private let animDuration: CFTimeInterval = 0.18
     private var animWindow: AXUIElement?
 
+    // Size-cycle state: repeating the same snap shortcut on the same window
+    // within the timeout steps through a sequence of sizes (Rectangle-style).
+    private var cycleWindow: AXUIElement?
+    private var cycleBase: SnapTarget?
+    private var cycleIndex = 0
+    private var cycleTime: CFTimeInterval = 0
+    private let cycleTimeout: CFTimeInterval = 1.5
+    private static let cycleSequences: [SnapTarget: [SnapTarget]] = [
+        .leftHalf:  [.leftHalf, .leftThird, .leftTwoThirds],
+        .rightHalf: [.rightHalf, .rightThird, .rightTwoThirds],
+    ]
+
     // MARK: snap
 
-    func snap(_ target: SnapTarget, animated: Bool = true) {
+    func snap(_ target: SnapTarget, animated: Bool = true, cycleSize: Bool = false) {
         guard let window = focusedWindow() else {
             print("[Glide][snap] no focused window")
             return
         }
-        snap(target, window: window, animated: animated)
+        let resolved = cycleSize ? cycledTarget(target, window: window) : target
+        if !cycleSize { resetCycle() }
+        snap(resolved, window: window, animated: animated)
+    }
+
+    private func cycledTarget(_ requested: SnapTarget, window: AXUIElement) -> SnapTarget {
+        guard let sequence = Self.cycleSequences[requested] else {
+            resetCycle()
+            return requested
+        }
+        let now = CACurrentMediaTime()
+        let sameWindow = cycleWindow.map { CFEqual($0, window) } ?? false
+        if sameWindow, cycleBase == requested, now - cycleTime < cycleTimeout {
+            cycleIndex = (cycleIndex + 1) % sequence.count
+        } else {
+            cycleIndex = 0
+        }
+        cycleWindow = window
+        cycleBase = requested
+        cycleTime = now
+        return sequence[cycleIndex]
+    }
+
+    private func resetCycle() {
+        cycleWindow = nil
+        cycleBase = nil
+        cycleIndex = 0
     }
 
     func snap(_ target: SnapTarget, window: AXUIElement, animated: Bool = true) {

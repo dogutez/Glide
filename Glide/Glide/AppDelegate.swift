@@ -49,7 +49,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func perform(_ action: HotkeyAction) {
         switch action {
         case .snap(let target):
-            windows.snap(target, animated: settings.animateSnap)
+            windows.snap(target, animated: settings.animateSnap, cycleSize: settings.sizeCycleEnabled)
         case .moveToNextDisplay:
             windows.moveToAdjacentDisplay(forward: true, animated: settings.animateSnap)
         case .moveToPreviousDisplay:

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+    Glide intentionally requests zero entitlements.
+
+    No network, no sandbox, no Apple Events, no automation, no hardened-runtime
+    exceptions, no file access exceptions. Accessibility access is granted by
+    the user at runtime via TCC (System Settings → Privacy & Security →
+    Accessibility); it is not an entitlement.
+
+    If a future feature requires an entitlement, the addition must be a
+    deliberate, reviewed decision measured against Glide's privacy promises:
+      • no network traffic
+      • no persistent data collection
+      • no screen recording
+      • only Accessibility permission
+-->
+<plist version="1.0">
+<dict/>
+</plist>

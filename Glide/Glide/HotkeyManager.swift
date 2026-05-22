@@ -13,6 +13,8 @@ enum HotkeyAction {
     case cycleWindow
     case saveLayout
     case restoreLayout
+    case hideOthers
+    case hideAll
 }
 
 /// Registers the user's bindings as Carbon hotkeys. Unlike an NSEvent global

@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let windows = WindowManager()
     private var gestures: GestureMonitor!
     private var hotkeys: HotkeyManager!
+    private var edgeSnap: EdgeSnapController!
     private let windowCycler = WindowCycler()
     private let layoutManager = LayoutManager()
     private var preferencesWindow: NSWindow?
@@ -36,6 +37,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         hotkeys.start()
 
+        edgeSnap = EdgeSnapController(windows: windows, settings: settings)
+        edgeSnap.start()
+
         setupStatusItem()
         print("[Glide][app] status item ready")
     }
@@ -56,6 +60,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             layoutManager.saveLayout()
         case .restoreLayout:
             layoutManager.restoreLayout()
+        case .hideOthers:
+            hideOtherApps()
+        case .hideAll:
+            hideAllApps()
+        }
+    }
+
+    private func hideOtherApps() {
+        let front = NSWorkspace.shared.frontmostApplication
+        for app in NSWorkspace.shared.runningApplications
+        where app.activationPolicy == .regular && app != front {
+            app.hide()
+        }
+    }
+
+    private func hideAllApps() {
+        // macOS always keeps one app frontmost — hiding the front app just
+        // promotes another. So first move focus to Finder (the desktop), then
+        // hide every real app. What "stays open" is then just the desktop.
+        let regular = NSWorkspace.shared.runningApplications.filter { $0.activationPolicy == .regular }
+        if let finder = regular.first(where: { $0.bundleIdentifier == "com.apple.finder" }) {
+            finder.activate()
+            for app in regular where app != finder {
+                app.hide()
+            }
+        } else {
+            NSApp.activate(ignoringOtherApps: true)
+            for app in regular {
+                app.hide()
+            }
         }
     }
 
@@ -158,6 +192,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
+        // Hiding apps doesn't need Accessibility, so these stay enabled.
+        addAction(to: menu, title: "Hide Other Apps",
+                  selector: #selector(handleHideOthers), actionID: .hideOthers)
+        addAction(to: menu, title: "Hide All Apps",
+                  selector: #selector(handleHideAll), actionID: .hideAll)
+
+        menu.addItem(.separator())
+
         addAction(to: menu, title: "Preferences…",   selector: #selector(handlePreferences), keyEquivalent: ",")
         addAction(to: menu, title: "Refresh Status", selector: #selector(handleRefresh))
         addAction(to: menu, title: "About Glide",    selector: #selector(handleAbout))
@@ -226,6 +268,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleCycleWindow() {
         windowCycler.cycleForward()
+    }
+
+    @objc private func handleHideOthers() {
+        hideOtherApps()
+    }
+
+    @objc private func handleHideAll() {
+        hideAllApps()
     }
 
     @objc private func handleSaveLayout() {

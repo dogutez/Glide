@@ -109,14 +109,27 @@ final class WindowManager {
             print("[Glide][snap] no screen for window")
             return
         }
-        let endRect = target.rect(in: screen.visibleFrame)
+        apply(target, window: window, screen: screen, animated: animated)
+    }
 
+    /// Snaps onto whichever screen contains `point` (the cursor), so dragging a
+    /// window toward another display's edge snaps it there rather than on its
+    /// origin screen.
+    func snap(_ target: SnapTarget, window: AXUIElement,
+              onScreenContaining point: CGPoint, animated: Bool = true) {
+        let screen = NSScreen.screens.first { $0.frame.contains(point) }
+            ?? screenContaining(window: window)
+        guard let screen else { return }
+        apply(target, window: window, screen: screen, animated: animated)
+    }
+
+    private func apply(_ target: SnapTarget, window: AXUIElement, screen: NSScreen, animated: Bool) {
+        let endRect = target.rect(in: screen.visibleFrame)
         if animated, let startRect = currentCocoaFrame(of: window) {
             animateFrame(window: window, from: startRect, to: endRect)
         } else {
             setFrame(window, to: endRect)
         }
-
         // Subtle Force Touch trackpad click on snap. Silently ignored on devices
         // without a haptic trackpad.
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)

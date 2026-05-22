@@ -75,6 +75,7 @@ enum HotkeyActionID: String, CaseIterable, Codable {
     case snapCenter, snapFull
     case moveNextDisplay, movePreviousDisplay
     case cycleWindow, saveLayout, restoreLayout
+    case hideOthers, hideAll
 
     var action: HotkeyAction {
         switch self {
@@ -98,6 +99,8 @@ enum HotkeyActionID: String, CaseIterable, Codable {
         case .cycleWindow:        return .cycleWindow
         case .saveLayout:         return .saveLayout
         case .restoreLayout:      return .restoreLayout
+        case .hideOthers:         return .hideOthers
+        case .hideAll:            return .hideAll
         }
     }
 
@@ -123,6 +126,8 @@ enum HotkeyActionID: String, CaseIterable, Codable {
         case .cycleWindow:         return "Cycle to Next Window"
         case .saveLayout:          return "Save Layout"
         case .restoreLayout:       return "Restore Layout"
+        case .hideOthers:          return "Hide Other Apps"
+        case .hideAll:             return "Hide All Apps"
         }
     }
 

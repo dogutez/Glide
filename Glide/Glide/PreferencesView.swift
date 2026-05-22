@@ -28,6 +28,7 @@ struct PreferencesView: View {
                         }
                     Toggle("Reverse vertical scrolling", isOn: $settings.reverseScrolling)
                     Toggle("Animate window movement", isOn: $settings.animateSnap)
+                    Toggle("Snap when dragging to screen edges", isOn: $settings.edgeSnapEnabled)
                 }
                 .padding(8)
             }

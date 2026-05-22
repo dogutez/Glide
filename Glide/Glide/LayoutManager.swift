@@ -6,10 +6,17 @@
 import AppKit
 import ApplicationServices
 
-private struct WindowSnapshot: Codable {
+struct WindowSnapshot: Codable {
     let bundleID: String
     let title: String
     let frame: CGRect  // raw AX coordinates (top-left origin)
+}
+
+/// A named, restorable arrangement of windows.
+struct Layout: Codable, Identifiable {
+    let id: UUID
+    var name: String
+    var snapshots: [WindowSnapshot]
 }
 
 /// Captures the position + size of every standard window and restores them
@@ -17,6 +24,16 @@ private struct WindowSnapshot: Codable {
 /// app bundle ID + title, so windows whose titles changed are skipped.
 final class LayoutManager {
     private static let key = "savedLayout"
+    private static let namedKey = "namedLayouts"
+
+    /// Named layouts, newest last. Loaded once at init; mutations persist.
+    private(set) var namedLayouts: [Layout] = []
+
+    init() {
+        namedLayouts = Self.loadNamed()
+    }
+
+    // MARK: quick slot (single, hotkey-friendly)
 
     var hasSavedLayout: Bool {
         UserDefaults.standard.data(forKey: Self.key) != nil
@@ -36,6 +53,51 @@ final class LayoutManager {
             return
         }
         applyLayout(snapshots)
+    }
+
+    // MARK: named layouts
+
+    func saveCurrentAs(name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let layout = Layout(id: UUID(), name: trimmed, snapshots: captureAll())
+        namedLayouts.append(layout)
+        persistNamed()
+        print("[Glide][layout] saved named '\(trimmed)' (\(layout.snapshots.count) windows)")
+    }
+
+    func restore(id: UUID) {
+        guard let layout = namedLayouts.first(where: { $0.id == id }) else { return }
+        applyLayout(layout.snapshots)
+    }
+
+    func rename(id: UUID, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, let index = namedLayouts.firstIndex(where: { $0.id == id }) else { return }
+        namedLayouts[index].name = trimmed
+        persistNamed()
+    }
+
+    func delete(id: UUID) {
+        namedLayouts.removeAll { $0.id == id }
+        persistNamed()
+    }
+
+    private struct NamedPayload: Codable {
+        var v: Int
+        var layouts: [Layout]
+    }
+
+    private func persistNamed() {
+        let payload = NamedPayload(v: 1, layouts: namedLayouts)
+        guard let data = try? JSONEncoder().encode(payload) else { return }
+        UserDefaults.standard.set(data, forKey: Self.namedKey)
+    }
+
+    private static func loadNamed() -> [Layout] {
+        guard let data = UserDefaults.standard.data(forKey: namedKey),
+              let payload = try? JSONDecoder().decode(NamedPayload.self, from: data) else { return [] }
+        return payload.layouts
     }
 
     // MARK: capture / apply

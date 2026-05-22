@@ -190,6 +190,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                   enabled: trusted && layoutManager.hasSavedLayout,
                   actionID: .restoreLayout)
 
+        let layoutsItem = NSMenuItem(title: "Layouts", action: nil, keyEquivalent: "")
+        layoutsItem.submenu = buildLayoutsMenu()
+        layoutsItem.isEnabled = trusted
+        menu.addItem(layoutsItem)
+
         menu.addItem(.separator())
 
         // Hiding apps doesn't need Accessibility, so these stay enabled.
@@ -251,6 +256,55 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return result
     }
 
+    private func buildLayoutsMenu() -> NSMenu {
+        let menu = NSMenu()
+        let saveItem = NSMenuItem(title: "Save Current Layout as…",
+                                  action: #selector(handleSaveLayoutAs), keyEquivalent: "")
+        saveItem.target = self
+        menu.addItem(saveItem)
+        menu.addItem(.separator())
+
+        if layoutManager.namedLayouts.isEmpty {
+            let empty = NSMenuItem(title: "No saved layouts", action: nil, keyEquivalent: "")
+            empty.isEnabled = false
+            menu.addItem(empty)
+        } else {
+            for layout in layoutManager.namedLayouts {
+                let item = NSMenuItem(title: layout.name, action: nil, keyEquivalent: "")
+                let sub = NSMenu()
+                addLayoutAction(to: sub, title: "Restore", selector: #selector(handleRestoreNamed(_:)), id: layout.id)
+                addLayoutAction(to: sub, title: "Rename…", selector: #selector(handleRenameLayout(_:)), id: layout.id)
+                addLayoutAction(to: sub, title: "Delete", selector: #selector(handleDeleteLayout(_:)), id: layout.id)
+                item.submenu = sub
+                menu.addItem(item)
+            }
+        }
+        return menu
+    }
+
+    private func addLayoutAction(to menu: NSMenu, title: String, selector: Selector, id: UUID) {
+        let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+        item.target = self
+        item.representedObject = id
+        menu.addItem(item)
+    }
+
+    /// Modal single-line text prompt. Returns nil if cancelled or empty.
+    private func promptForText(_ message: String, defaultValue: String = "") -> String? {
+        let alert = NSAlert()
+        alert.messageText = message
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
+        field.stringValue = defaultValue
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
+    }
+
     // MARK: menu actions
 
     @objc private func handleSnap(_ sender: NSMenuItem) {
@@ -268,6 +322,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handleCycleWindow() {
         windowCycler.cycleForward()
+    }
+
+    @objc private func handleSaveLayoutAs() {
+        guard let name = promptForText("Save current window layout as:") else { return }
+        layoutManager.saveCurrentAs(name: name)
+    }
+
+    @objc private func handleRestoreNamed(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        layoutManager.restore(id: id)
+    }
+
+    @objc private func handleRenameLayout(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        let current = layoutManager.namedLayouts.first { $0.id == id }?.name ?? ""
+        guard let name = promptForText("Rename layout:", defaultValue: current) else { return }
+        layoutManager.rename(id: id, to: name)
+    }
+
+    @objc private func handleDeleteLayout(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? UUID else { return }
+        layoutManager.delete(id: id)
     }
 
     @objc private func handleHideOthers() {

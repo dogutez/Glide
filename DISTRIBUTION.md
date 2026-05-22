@@ -26,7 +26,8 @@ ve birlikte aşağıdaki Bölüm 2'yi de ilet.
 
 ## Bölüm 2 — Arkadaşların nasıl kurar
 
-> **Gereksinim:** macOS 15.6 veya üzeri.
+> **Gereksinim:** Apple Silicon Mac (M1 veya üzeri) ve macOS 15.6 veya üzeri.
+> Intel Mac'lerde **çalışmaz** (uygulama yalnızca arm64 olarak derlenir).
 
 Glide ücretli bir Apple Developer hesabıyla imzalanmadığı için macOS ilk açılışta
 "güvenilmeyen geliştirici" uyarısı verir. Bu normal — aşağıdaki adımlarla aşılır.
@@ -78,7 +79,7 @@ Menü çubuğundaki simge artık 3 dikdörtgenli normal hâline döner. Hazır:
 | "Glide hasarlı, çöpe taşınmalı" | Bölüm 2 Adım 2'deki `xattr -cr` komutunu çalıştır |
 | Menü simgesi üçgen-ünlem ⚠️ | Erişilebilirlik izni verilmemiş — Adım 4'ü tekrarla, sonra Glide'ı yeniden başlat |
 | Snap çalışmıyor | İzni verdikten sonra Glide'ı kapatıp açtın mı? Şart. |
-| Uygulama hiç açılmıyor | macOS sürümü 15.6+ mı kontrol et |
+| Uygulama hiç açılmıyor | Apple Silicon (M1+) ve macOS 15.6+ mı kontrol et — Intel'de çalışmaz |
 
 ---
 

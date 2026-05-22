@@ -41,7 +41,20 @@ fi
 # Accessibility/TCC grant survives rebuilds — the user only grants once.
 # Falls back to ad-hoc if no Development identity is in the keychain.
 SIGN_ID="$(security find-identity -v -p codesigning | awk '/Apple Development/ {print $2; exit}')"
-xattr -cr "$APP_PATH"
+
+# Strip detritus that makes codesign fail with "resource fork ... not allowed".
+# `xattr -cr` cannot remove com.apple.provenance (macOS-protected), so round-trip
+# the bundle through tar without mac metadata, which drops the offending bits.
+echo "==> Stripping extended-attribute detritus…"
+xattr -cr "$APP_PATH" 2>/dev/null || true
+_parent="$(dirname "$APP_PATH")"
+_name="$(basename "$APP_PATH")"
+_tar="$(mktemp -t glidebuild).tar"
+tar --no-xattrs --no-mac-metadata -cf "$_tar" -C "$_parent" "$_name"
+rm -rf "$APP_PATH"
+tar -xf "$_tar" -C "$_parent"
+rm -f "$_tar"
+
 if [ -n "$SIGN_ID" ]; then
   echo "==> Signing (Apple Development: $SIGN_ID)…"
   codesign --force --deep --sign "$SIGN_ID" "$APP_PATH"

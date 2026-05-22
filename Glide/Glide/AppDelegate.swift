@@ -137,19 +137,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(snapItem)
 
         addAction(to: menu, title: "Move Window to Next Display",
-                  selector: #selector(handleMoveNextDisplay), enabled: trusted)
+                  selector: #selector(handleMoveNextDisplay), enabled: trusted,
+                  actionID: .moveNextDisplay)
         addAction(to: menu, title: "Move Window to Previous Display",
-                  selector: #selector(handleMovePreviousDisplay), enabled: trusted)
+                  selector: #selector(handleMovePreviousDisplay), enabled: trusted,
+                  actionID: .movePreviousDisplay)
         addAction(to: menu, title: "Cycle to Next Window",
-                  selector: #selector(handleCycleWindow), enabled: trusted)
+                  selector: #selector(handleCycleWindow), enabled: trusted,
+                  actionID: .cycleWindow)
 
         menu.addItem(.separator())
 
         addAction(to: menu, title: "Save Layout",
-                  selector: #selector(handleSaveLayout), enabled: trusted)
+                  selector: #selector(handleSaveLayout), enabled: trusted,
+                  actionID: .saveLayout)
         addAction(to: menu, title: "Restore Layout",
                   selector: #selector(handleRestoreLayout),
-                  enabled: trusted && layoutManager.hasSavedLayout)
+                  enabled: trusted && layoutManager.hasSavedLayout,
+                  actionID: .restoreLayout)
 
         menu.addItem(.separator())
 
@@ -160,10 +165,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func addAction(to menu: NSMenu, title: String, selector: Selector,
-                           keyEquivalent: String = "", enabled: Bool = true) {
+                           keyEquivalent: String = "", enabled: Bool = true,
+                           actionID: HotkeyActionID? = nil) {
         let item = NSMenuItem(title: title, action: selector, keyEquivalent: keyEquivalent)
         item.target = self
         item.isEnabled = enabled
+        // Skip the shortcut hint when disabled — an attributedTitle suppresses
+        // the system's automatic grey-out.
+        if enabled, let attr = shortcutHintTitle(title, actionID: actionID, tabStop: 280) {
+            item.attributedTitle = attr
+        }
         menu.addItem(item)
     }
 
@@ -171,7 +182,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let item = NSMenuItem(title: title, action: #selector(handleSnap(_:)), keyEquivalent: "")
         item.target = self
         item.representedObject = target
+        if let attr = shortcutHintTitle(title, actionID: .forSnap(target), tabStop: 200) {
+            item.attributedTitle = attr
+        }
         menu.addItem(item)
+    }
+
+    /// Builds a menu title with the action's current shortcut right-aligned in
+    /// secondary color. Display only — no `keyEquivalent`, so it can't fire
+    /// alongside the global Carbon hotkey. Returns nil when the action is unbound.
+    private func shortcutHintTitle(_ title: String, actionID: HotkeyActionID?,
+                                   tabStop: CGFloat) -> NSAttributedString? {
+        guard let actionID, let shortcut = shortcuts.shortcut(for: actionID) else { return nil }
+        let para = NSMutableParagraphStyle()
+        para.tabStops = [NSTextTab(textAlignment: .right, location: tabStop)]
+        let menuFont = NSFont.menuFont(ofSize: 0)
+        let result = NSMutableAttributedString(
+            string: title + "\t",
+            attributes: [.font: menuFont, .paragraphStyle: para]
+        )
+        result.append(NSAttributedString(
+            string: shortcut.displayString,
+            attributes: [.font: menuFont, .paragraphStyle: para,
+                         .foregroundColor: NSColor.secondaryLabelColor]
+        ))
+        return result
     }
 
     // MARK: menu actions

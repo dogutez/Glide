@@ -149,8 +149,10 @@ struct PreferencesView: View {
 
         let shortcut = Shortcut(keyCode: event.keyCode, modifierFlags: masked.rawValue)
         let stolen = shortcuts.assign(shortcut, to: id)
-        stopRecording()
-        if let stolen {
+        stopRecording()  // resume() re-registers synchronously, so failures are known now
+        if shortcuts.failedRegistrations.contains(id) {
+            note = "\(shortcut.displayString) is reserved by macOS — \(id.title) won't trigger. Pick another."
+        } else if let stolen {
             note = "\(shortcut.displayString) reassigned to \(id.title) (was \(stolen.title))"
         } else {
             note = "\(id.title) → \(shortcut.displayString)"

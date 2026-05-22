@@ -126,6 +126,15 @@ enum HotkeyActionID: String, CaseIterable, Codable {
         }
     }
 
+    /// Reverse lookup: which action ID drives a given snap target (so the menu
+    /// can show its current shortcut).
+    static func forSnap(_ target: SnapTarget) -> HotkeyActionID? {
+        allCases.first {
+            if case .snap(let t) = $0.action { return t == target }
+            return false
+        }
+    }
+
     /// The factory-default bindings. `movePreviousDisplay` ships unbound — the
     /// menu still exposes it, and the user can assign a key in Preferences.
     static var defaultBindings: [HotkeyActionID: Shortcut] {

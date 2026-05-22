@@ -5,6 +5,7 @@
 
 import AppKit
 import ApplicationServices
+import Observation
 
 struct WindowSnapshot: Codable {
     let bundleID: String
@@ -12,22 +13,33 @@ struct WindowSnapshot: Codable {
     let frame: CGRect  // raw AX coordinates (top-left origin)
 }
 
-/// A named, restorable arrangement of windows.
-struct Layout: Codable, Identifiable {
+/// A named, restorable arrangement of windows, with an optional global shortcut.
+/// Named `WindowLayout` (not `Layout`) to avoid colliding with SwiftUI.Layout.
+struct WindowLayout: Codable, Identifiable {
     let id: UUID
     var name: String
     var snapshots: [WindowSnapshot]
+    var shortcut: Shortcut?  // absent in old data decodes to nil
 }
 
 /// Captures the position + size of every standard window and restores them
 /// later. Matching on restore is best-effort: a window is identified by its
 /// app bundle ID + title, so windows whose titles changed are skipped.
+@Observable
 final class LayoutManager {
     private static let key = "savedLayout"
     private static let namedKey = "namedLayouts"
 
     /// Named layouts, newest last. Loaded once at init; mutations persist.
-    private(set) var namedLayouts: [Layout] = []
+    private(set) var namedLayouts: [WindowLayout] = []
+
+    /// Fired when the set of layout shortcuts changes, so HotkeyManager
+    /// re-registers. NOT fired on rename (no shortcut change).
+    @ObservationIgnored var shortcutsChanged: (() -> Void)?
+
+    /// Clears any HotkeyActionID bound to a combo (returns its title) so a
+    /// layout can steal it. Set by AppDelegate.
+    @ObservationIgnored var actionConflictResolver: ((Shortcut) -> String?)?
 
     init() {
         namedLayouts = Self.loadNamed()
@@ -60,7 +72,7 @@ final class LayoutManager {
     func saveCurrentAs(name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
-        let layout = Layout(id: UUID(), name: trimmed, snapshots: captureAll())
+        let layout = WindowLayout(id: UUID(), name: trimmed, snapshots: captureAll(), shortcut: nil)
         namedLayouts.append(layout)
         persistNamed()
         print("[Glide][layout] saved named '\(trimmed)' (\(layout.snapshots.count) windows)")
@@ -79,13 +91,48 @@ final class LayoutManager {
     }
 
     func delete(id: UUID) {
+        let hadShortcut = namedLayouts.first { $0.id == id }?.shortcut != nil
         namedLayouts.removeAll { $0.id == id }
         persistNamed()
+        if hadShortcut { shortcutsChanged?() }
+    }
+
+    /// Assigns (or clears, when nil) a layout's shortcut, stealing the combo
+    /// from any other layout or action that holds it. Returns the displaced
+    /// item's name for a "(was X)" note.
+    @discardableResult
+    func setShortcut(_ shortcut: Shortcut?, for id: UUID) -> String? {
+        guard let index = namedLayouts.firstIndex(where: { $0.id == id }) else { return nil }
+        var displaced: String?
+        if let shortcut {
+            for i in namedLayouts.indices where i != index && namedLayouts[i].shortcut == shortcut {
+                displaced = namedLayouts[i].name
+                namedLayouts[i].shortcut = nil
+            }
+            if let stolenAction = actionConflictResolver?(shortcut), displaced == nil {
+                displaced = stolenAction
+            }
+        }
+        namedLayouts[index].shortcut = shortcut
+        persistNamed()
+        shortcutsChanged?()
+        return displaced
+    }
+
+    /// Clears whichever layout holds `shortcut` (returns its name). Lets an
+    /// action steal a combo from a layout.
+    func clearLayoutWithShortcut(_ shortcut: Shortcut) -> String? {
+        guard let i = namedLayouts.firstIndex(where: { $0.shortcut == shortcut }) else { return nil }
+        let name = namedLayouts[i].name
+        namedLayouts[i].shortcut = nil
+        persistNamed()
+        shortcutsChanged?()
+        return name
     }
 
     private struct NamedPayload: Codable {
         var v: Int
-        var layouts: [Layout]
+        var layouts: [WindowLayout]
     }
 
     private func persistNamed() {
@@ -94,7 +141,7 @@ final class LayoutManager {
         UserDefaults.standard.set(data, forKey: Self.namedKey)
     }
 
-    private static func loadNamed() -> [Layout] {
+    private static func loadNamed() -> [WindowLayout] {
         guard let data = UserDefaults.standard.data(forKey: namedKey),
               let payload = try? JSONDecoder().decode(NamedPayload.self, from: data) else { return [] }
         return payload.layouts

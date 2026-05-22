@@ -25,6 +25,10 @@ final class ShortcutStore {
     /// like ⌘Space). Written by HotkeyManager; read by the UI to flag them.
     var failedRegistrations: Set<HotkeyActionID> = []
 
+    /// Clears any layout holding a combo (returns its name) so an action can
+    /// steal it. Set by AppDelegate.
+    @ObservationIgnored var externalConflictResolver: ((Shortcut) -> String?)?
+
     init() {
         bindings = Self.load() ?? HotkeyActionID.defaultBindings
     }
@@ -41,19 +45,33 @@ final class ShortcutStore {
 
     func shortcut(for id: HotkeyActionID) -> Shortcut? { bindings[id] }
 
-    /// Assigns `shortcut` to `id`. If another action already used that exact
-    /// combo, it's unbound and returned so the UI can say "stolen from X".
+    /// Assigns `shortcut` to `id`, stealing the combo from any other action or
+    /// layout that holds it. Returns the displaced item's display name for a
+    /// "(was X)" note.
     @discardableResult
-    func assign(_ shortcut: Shortcut, to id: HotkeyActionID) -> HotkeyActionID? {
-        var stolenFrom: HotkeyActionID?
+    func assign(_ shortcut: Shortcut, to id: HotkeyActionID) -> String? {
+        var displaced: String?
         for (other, existing) in bindings where other != id && existing == shortcut {
             bindings[other] = nil
-            stolenFrom = other
+            displaced = other.title
         }
         bindings[id] = shortcut
+        if let stolenLayout = externalConflictResolver?(shortcut), displaced == nil {
+            displaced = stolenLayout
+        }
         save()
         onChange?()
-        return stolenFrom
+        return displaced
+    }
+
+    /// Clears whichever action holds `shortcut` (returns its title). Lets a
+    /// layout steal a combo from an action.
+    func clearActionWithShortcut(_ shortcut: Shortcut) -> String? {
+        guard let entry = bindings.first(where: { $0.value == shortcut }) else { return nil }
+        bindings[entry.key] = nil
+        save()
+        onChange?()
+        return entry.key.title
     }
 
     func clear(_ id: HotkeyActionID) {

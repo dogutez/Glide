@@ -35,7 +35,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.onAction = { [weak self] action in
             self?.perform(action)
         }
+        hotkeys.layoutShortcuts = { [weak self] in
+            self?.layoutManager.namedLayouts.compactMap { layout in
+                layout.shortcut.map { (layout.id, $0) }
+            } ?? []
+        }
+        hotkeys.onLayoutHotkey = { [weak self] id in
+            self?.layoutManager.restore(id: id)
+        }
         hotkeys.start()
+
+        // Cross-namespace shortcut stealing + re-register on layout changes.
+        shortcuts.externalConflictResolver = { [weak self] sc in
+            self?.layoutManager.clearLayoutWithShortcut(sc)
+        }
+        layoutManager.actionConflictResolver = { [weak self] sc in
+            self?.shortcuts.clearActionWithShortcut(sc)
+        }
+        layoutManager.shortcutsChanged = { [weak self] in
+            self?.hotkeys.refresh()
+        }
 
         edgeSnap = EdgeSnapController(windows: windows, settings: settings)
         edgeSnap.start()
@@ -240,7 +259,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// alongside the global Carbon hotkey. Returns nil when the action is unbound.
     private func shortcutHintTitle(_ title: String, actionID: HotkeyActionID?,
                                    tabStop: CGFloat) -> NSAttributedString? {
-        guard let actionID, let shortcut = shortcuts.shortcut(for: actionID) else { return nil }
+        guard let actionID else { return nil }
+        return shortcutHintTitle(title, shortcut: shortcuts.shortcut(for: actionID), tabStop: tabStop)
+    }
+
+    private func shortcutHintTitle(_ title: String, shortcut: Shortcut?,
+                                   tabStop: CGFloat) -> NSAttributedString? {
+        guard let shortcut else { return nil }
         let para = NSMutableParagraphStyle()
         para.tabStops = [NSTextTab(textAlignment: .right, location: tabStop)]
         let menuFont = NSFont.menuFont(ofSize: 0)
@@ -269,24 +294,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             empty.isEnabled = false
             menu.addItem(empty)
         } else {
+            // Click a layout to restore it directly. Rename/delete/shortcut live
+            // in Preferences → Layouts.
             for layout in layoutManager.namedLayouts {
-                let item = NSMenuItem(title: layout.name, action: nil, keyEquivalent: "")
-                let sub = NSMenu()
-                addLayoutAction(to: sub, title: "Restore", selector: #selector(handleRestoreNamed(_:)), id: layout.id)
-                addLayoutAction(to: sub, title: "Rename…", selector: #selector(handleRenameLayout(_:)), id: layout.id)
-                addLayoutAction(to: sub, title: "Delete", selector: #selector(handleDeleteLayout(_:)), id: layout.id)
-                item.submenu = sub
+                let item = NSMenuItem(title: layout.name,
+                                      action: #selector(handleRestoreNamed(_:)), keyEquivalent: "")
+                item.target = self
+                item.representedObject = layout.id
+                if let attr = shortcutHintTitle(layout.name, shortcut: layout.shortcut, tabStop: 200) {
+                    item.attributedTitle = attr
+                }
                 menu.addItem(item)
             }
         }
         return menu
-    }
-
-    private func addLayoutAction(to menu: NSMenu, title: String, selector: Selector, id: UUID) {
-        let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
-        item.target = self
-        item.representedObject = id
-        menu.addItem(item)
     }
 
     /// Modal single-line text prompt. Returns nil if cancelled or empty.
@@ -334,18 +355,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         layoutManager.restore(id: id)
     }
 
-    @objc private func handleRenameLayout(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        let current = layoutManager.namedLayouts.first { $0.id == id }?.name ?? ""
-        guard let name = promptForText("Rename layout:", defaultValue: current) else { return }
-        layoutManager.rename(id: id, to: name)
-    }
-
-    @objc private func handleDeleteLayout(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        layoutManager.delete(id: id)
-    }
-
     @objc private func handleHideOthers() {
         hideOtherApps()
     }
@@ -391,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handlePreferences() {
         if preferencesWindow == nil {
-            let view = PreferencesView(settings: settings, shortcuts: shortcuts)
+            let view = PreferencesView(settings: settings, shortcuts: shortcuts, layoutManager: layoutManager)
             let host = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: host)
             window.title = "Glide Preferences"

@@ -22,11 +22,16 @@ enum HotkeyAction {
 /// won't also fire in the focused app. Re-registers whenever the store changes.
 final class HotkeyManager {
     var onAction: ((HotkeyAction) -> Void)?
+    /// Fired with a layout's id when its shortcut is pressed.
+    var onLayoutHotkey: ((UUID) -> Void)?
+    /// Supplies the current layout shortcuts to register. Set by AppDelegate.
+    var layoutShortcuts: () -> [(id: UUID, shortcut: Shortcut)] = { [] }
 
     private let store: ShortcutStore
     private var handlerRef: EventHandlerRef?
     private var hotKeyRefs: [EventHotKeyRef] = []
     private var actionByNumber: [UInt32: HotkeyActionID] = [:]
+    private var layoutByNumber: [UInt32: UUID] = [:]
 
     init(store: ShortcutStore) {
         self.store = store
@@ -36,6 +41,11 @@ final class HotkeyManager {
         installHandler()
         reload()
         store.onChange = { [weak self] in self?.reload() }
+    }
+
+    /// Re-register everything (e.g. after layout shortcuts change).
+    func refresh() {
+        reload()
     }
 
     func stop() {
@@ -48,8 +58,11 @@ final class HotkeyManager {
     }
 
     fileprivate func handle(number: UInt32) {
-        guard let id = actionByNumber[number] else { return }
-        onAction?(id.action)
+        if let id = actionByNumber[number] {
+            onAction?(id.action)
+        } else if let layoutID = layoutByNumber[number] {
+            onLayoutHotkey?(layoutID)
+        }
     }
 
     // MARK: registration
@@ -94,6 +107,22 @@ final class HotkeyManager {
             }
         }
         store.failedRegistrations = failures
+
+        for (layoutID, shortcut) in layoutShortcuts() {
+            let hkID = EventHotKeyID(signature: glideHotKeySignature, id: number)
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(
+                UInt32(shortcut.keyCode), shortcut.carbonModifiers,
+                hkID, GetApplicationEventTarget(), 0, &ref
+            )
+            if status == noErr, let ref {
+                hotKeyRefs.append(ref)
+                layoutByNumber[number] = layoutID
+                number += 1
+            } else {
+                print("[Glide][hotkey] register failed for layout \(layoutID) status=\(status)")
+            }
+        }
         print("[Glide][hotkey] registered \(hotKeyRefs.count) hotkeys")
     }
 
@@ -101,6 +130,7 @@ final class HotkeyManager {
         for ref in hotKeyRefs { UnregisterEventHotKey(ref) }
         hotKeyRefs.removeAll()
         actionByNumber.removeAll()
+        layoutByNumber.removeAll()
     }
 }
 

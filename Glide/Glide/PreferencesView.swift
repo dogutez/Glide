@@ -6,13 +6,21 @@
 import SwiftUI
 import ServiceManagement
 
+enum RecordTarget: Equatable {
+    case action(HotkeyActionID)
+    case layout(UUID)
+}
+
 struct PreferencesView: View {
     @Bindable var settings: AppSettings
     let shortcuts: ShortcutStore
+    let layoutManager: LayoutManager
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
-    @State private var recordingID: HotkeyActionID?
+    @State private var recordingTarget: RecordTarget?
     @State private var recordMonitor: Any?
     @State private var note: String?
+    @State private var renamingLayout: WindowLayout?
+    @State private var renameText = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -55,6 +63,27 @@ struct PreferencesView: View {
                 }
             }
 
+            GroupBox(label: Text("Layouts").font(.headline)) {
+                VStack(alignment: .leading, spacing: 4) {
+                    if layoutManager.namedLayouts.isEmpty {
+                        Text("No saved layouts yet. Menu bar → Layouts → Save Current Layout as…")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(layoutManager.namedLayouts) { layout in
+                                    layoutRow(layout)
+                                }
+                            }
+                        }
+                        .frame(maxHeight: 140)
+                    }
+                }
+                .padding(8)
+            }
+
             GroupBox(label: Text("Trackpad").font(.headline)) {
                 VStack(alignment: .leading, spacing: 4) {
                     shortcut("Snap window",      "2-finger swipe on title bar")
@@ -73,6 +102,17 @@ struct PreferencesView: View {
         .padding(20)
         .frame(width: 420)
         .onDisappear { stopRecording() }
+        .alert("Rename Layout", isPresented: Binding(
+            get: { renamingLayout != nil },
+            set: { if !$0 { renamingLayout = nil } }
+        )) {
+            TextField("Name", text: $renameText)
+            Button("Cancel", role: .cancel) { renamingLayout = nil }
+            Button("Save") {
+                if let layout = renamingLayout { layoutManager.rename(id: layout.id, to: renameText) }
+                renamingLayout = nil
+            }
+        }
     }
 
     private var keyboardHeader: some View {
@@ -89,7 +129,7 @@ struct PreferencesView: View {
     }
 
     private func shortcutRow(_ id: HotkeyActionID) -> some View {
-        let isRecording = recordingID == id
+        let isRecording = recordingTarget == .action(id)
         let current = shortcuts.shortcut(for: id)
         return HStack {
             Text(id.title)
@@ -99,7 +139,7 @@ struct PreferencesView: View {
                     .foregroundStyle(.yellow)
                     .help("This combination is reserved by macOS and couldn't be registered. Pick another.")
             }
-            Button(action: { isRecording ? stopRecording() : startRecording(id) }) {
+            Button(action: { isRecording ? stopRecording() : startRecording(.action(id)) }) {
                 Text(isRecording ? "Press keys…" : (current?.displayString ?? "Unbound"))
                     .font(.system(.body, design: .monospaced))
                     .foregroundStyle(isRecording ? Color.accentColor : (current == nil ? .secondary : .primary))
@@ -118,15 +158,44 @@ struct PreferencesView: View {
         }
     }
 
+    private func layoutRow(_ layout: WindowLayout) -> some View {
+        let isRecording = recordingTarget == .layout(layout.id)
+        return HStack {
+            Text(layout.name).lineLimit(1)
+            Spacer()
+            Button(action: { isRecording ? stopRecording() : startRecording(.layout(layout.id)) }) {
+                Text(isRecording ? "Press keys…" : (layout.shortcut?.displayString ?? "No shortcut"))
+                    .font(.system(.body, design: .monospaced))
+                    .foregroundStyle(isRecording ? Color.accentColor : (layout.shortcut == nil ? .secondary : .primary))
+                    .frame(minWidth: 70)
+            }
+            .buttonStyle(.bordered)
+            Button { layoutManager.setShortcut(nil, for: layout.id) } label: {
+                Image(systemName: "xmark.circle.fill")
+            }
+            .buttonStyle(.borderless).foregroundStyle(.secondary)
+            .opacity(layout.shortcut == nil ? 0 : 1)
+            .disabled(layout.shortcut == nil)
+            Button { renameText = layout.name; renamingLayout = layout } label: {
+                Image(systemName: "pencil")
+            }
+            .buttonStyle(.borderless).foregroundStyle(.secondary)
+            Button { layoutManager.delete(id: layout.id) } label: {
+                Image(systemName: "trash")
+            }
+            .buttonStyle(.borderless).foregroundStyle(.secondary)
+        }
+    }
+
     // MARK: shortcut recording
 
-    private func startRecording(_ id: HotkeyActionID) {
+    private func startRecording(_ target: RecordTarget) {
         stopRecording()
         // Suspend live hotkeys so pressing an already-bound combo gets captured
         // here instead of firing its system-wide action.
         shortcuts.suspend()
-        recordingID = id
-        note = "Recording \(id.title) — press a combo (Esc to cancel)"
+        recordingTarget = target
+        note = "Press a combo (Esc to cancel)"
         recordMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown]) { event in
             handleRecording(event)
             return nil  // swallow so the keystroke doesn't leak into the UI / beep
@@ -134,7 +203,7 @@ struct PreferencesView: View {
     }
 
     private func handleRecording(_ event: NSEvent) {
-        guard let id = recordingID else { return }
+        guard let target = recordingTarget else { return }
         let masked = event.modifierFlags.intersection([.control, .option, .shift, .command])
 
         if Int(event.keyCode) == 53 && masked.isEmpty {  // Escape
@@ -150,14 +219,26 @@ struct PreferencesView: View {
         }
 
         let shortcut = Shortcut(keyCode: event.keyCode, modifierFlags: masked.rawValue)
-        let stolen = shortcuts.assign(shortcut, to: id)
-        stopRecording()  // resume() re-registers synchronously, so failures are known now
-        if shortcuts.failedRegistrations.contains(id) {
-            note = "\(shortcut.displayString) is reserved by macOS — \(id.title) won't trigger. Pick another."
-        } else if let stolen {
-            note = "\(shortcut.displayString) reassigned to \(id.title) (was \(stolen.title))"
-        } else {
-            note = "\(id.title) → \(shortcut.displayString)"
+        switch target {
+        case .action(let id):
+            let stolen = shortcuts.assign(shortcut, to: id)
+            stopRecording()  // resume() re-registers synchronously, so failures are known now
+            if shortcuts.failedRegistrations.contains(id) {
+                note = "\(shortcut.displayString) is reserved by macOS — \(id.title) won't trigger. Pick another."
+            } else if let stolen {
+                note = "\(shortcut.displayString) → \(id.title) (was \(stolen))"
+            } else {
+                note = "\(id.title) → \(shortcut.displayString)"
+            }
+        case .layout(let layoutID):
+            let name = layoutManager.namedLayouts.first { $0.id == layoutID }?.name ?? "layout"
+            let stolen = layoutManager.setShortcut(shortcut, for: layoutID)
+            stopRecording()
+            if let stolen {
+                note = "\(shortcut.displayString) → \(name) (was \(stolen))"
+            } else {
+                note = "\(name) → \(shortcut.displayString)"
+            }
         }
     }
 
@@ -167,7 +248,7 @@ struct PreferencesView: View {
             NSEvent.removeMonitor(recordMonitor)
             self.recordMonitor = nil
         }
-        recordingID = nil
+        recordingTarget = nil
         if wasRecording {
             shortcuts.resume()  // re-registers with current bindings
             note = nil          // clear the stale "Recording…" hint on cancel

@@ -19,6 +19,9 @@ Bu komut:
 2. `Glide.app`'i paketler
 3. Masaüstüne **`Glide.zip`** dosyası koyar
 
+Kendi Mac'ine de kurmak istersen `./build-release.sh --install` çalıştır: ayrıca
+`/Applications/Glide.app`'i yenisiyle değiştirir ve yeniden başlatır.
+
 Bu `Glide.zip` dosyasını arkadaşlarına gönder (AirDrop, e-posta, WeTransfer, vb.)
 ve birlikte aşağıdaki Bölüm 2'yi de ilet.
 

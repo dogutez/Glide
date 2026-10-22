@@ -1,9 +1,13 @@
 #!/bin/bash
 #
 # build-release.sh — Builds a Release Glide.app and zips it for sharing.
-# Run from the repo root:  ./build-release.sh
+# Run from the repo root:  ./build-release.sh [--install]
+#   --install  also replaces /Applications/Glide.app and relaunches it
 #
 set -euo pipefail
+
+INSTALL=0
+[ "${1:-}" = "--install" ] && INSTALL=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$SCRIPT_DIR/Glide"
@@ -42,31 +46,37 @@ fi
 # Falls back to ad-hoc if no Development identity is in the keychain.
 SIGN_ID="$(security find-identity -v -p codesigning | awk '/Apple Development/ {print $2; exit}')"
 
-# Strip detritus that makes codesign fail with "resource fork ... not allowed".
-# `xattr -cr` cannot remove com.apple.provenance (macOS-protected), so round-trip
-# the bundle through tar without mac metadata, which drops the offending bits.
-echo "==> Stripping extended-attribute detritus…"
-xattr -cr "$APP_PATH" 2>/dev/null || true
-_parent="$(dirname "$APP_PATH")"
-_name="$(basename "$APP_PATH")"
-_tar="$(mktemp -t glidebuild).tar"
-tar --no-xattrs --no-mac-metadata -cf "$_tar" -C "$_parent" "$_name"
-rm -rf "$APP_PATH"
-tar -xf "$_tar" -C "$_parent"
-rm -f "$_tar"
+# Sign and package from a temp folder outside the repo. Extended attributes make
+# codesign fail with "resource fork ... detritus not allowed", and on the iCloud
+# Desktop the file provider keeps re-adding com.apple.FinderInfo to the bundle,
+# so stripping it in place is a race. Copy without xattrs/resource forks instead.
+echo "==> Staging a clean copy…"
+STAGE="$(mktemp -d -t glidebuild)"
+trap 'rm -rf "$STAGE"' EXIT
+SIGNED_APP="$STAGE/Glide.app"
+ditto --norsrc --noextattr --noqtn "$APP_PATH" "$SIGNED_APP"
 
 if [ -n "$SIGN_ID" ]; then
   echo "==> Signing (Apple Development: $SIGN_ID)…"
-  codesign --force --deep --sign "$SIGN_ID" "$APP_PATH"
+  codesign --force --deep --sign "$SIGN_ID" "$SIGNED_APP"
 else
   echo "==> Signing (ad-hoc — no Development identity found)…"
-  codesign --force --deep --sign - "$APP_PATH"
+  codesign --force --deep --sign - "$SIGNED_APP"
 fi
+codesign --verify --deep --strict "$SIGNED_APP"
 
 echo "==> Packaging…"
 rm -f "$OUTPUT_ZIP"
 # ditto preserves the .app bundle structure; a plain `zip` can corrupt it.
-ditto -c -k --keepParent "$APP_PATH" "$OUTPUT_ZIP"
+ditto -c -k --norsrc --keepParent "$SIGNED_APP" "$OUTPUT_ZIP"
+
+if [ "$INSTALL" = 1 ]; then
+  echo "==> Installing to /Applications and relaunching…"
+  pkill -x Glide 2>/dev/null && sleep 1 || true
+  rm -rf /Applications/Glide.app
+  ditto --norsrc --noextattr --noqtn "$SIGNED_APP" /Applications/Glide.app
+  open /Applications/Glide.app
+fi
 
 echo ""
 echo "==> Done."

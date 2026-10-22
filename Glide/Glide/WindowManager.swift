@@ -341,26 +341,28 @@ final class WindowManager {
         return titleBar.contains(axPoint) ? window : nil
     }
 
-    /// Is `axPoint` in the top `titleBarHeight` of the front-most window under
-    /// it? Uses window bounds and layer only — those need no Screen Recording
-    /// permission (window *names* would, and we never read them).
+    /// Could `axPoint` be on a title bar, i.e. inside the top `titleBarHeight`
+    /// of some normal window? A conservative filter: `false` only when it
+    /// certainly isn't, and the AX check makes the real decision. Uses window
+    /// bounds and layer only — those need no Screen Recording permission
+    /// (window *names* would, and we never read them).
     private func mayBeTitleBar(at axPoint: CGPoint) -> Bool {
         guard let list = CGWindowListCopyWindowInfo(
             [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
         ) as? [[String: Any]] else {
             return true  // can't tell — let the AX check decide
         }
-        // The list is ordered front to back, so the first hit is the window
-        // actually under the cursor.
+        let overlayLayer = Int(CGWindowLevelForKey(.dockWindow))
         for info in list {
-            guard let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+            // Skip the Dock, menu bar, menus and other overlays. They can't be
+            // dragged by a title bar, and some (the Dock's) are invisible
+            // full-screen windows that sit above everything.
+            guard (info[kCGWindowLayer as String] as? Int ?? 0) < overlayLayer,
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+                  let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
-                  bounds.contains(axPoint),
-                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
-            // Dock, menu bar, open menus, overlays: never a draggable title bar.
-            let layer = info[kCGWindowLayer as String] as? Int ?? 0
-            guard layer < Int(CGWindowLevelForKey(.dockWindow)) else { return false }
-            return axPoint.y - bounds.minY <= titleBarHeight
+                  bounds.contains(axPoint) else { continue }
+            if axPoint.y - bounds.minY <= titleBarHeight { return true }
         }
         return false
     }

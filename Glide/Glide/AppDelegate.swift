@@ -21,6 +21,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         print("[Glide][app] applicationDidFinishLaunching")
 
+        // Every AX call is a synchronous round-trip to another app, and the
+        // default timeout is ~6 s — one busy or hung app would freeze Glide (and
+        // every gesture/hotkey) that long. Set on the system-wide element, the
+        // timeout applies to all AX elements.
+        AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), 0.25)
+
         gestures = GestureMonitor(windows: windows, settings: settings)
         gestures.onSwipe = { [windows, settings] target, window in
             windows.snap(target, window: window, animated: settings.animateSnap)

@@ -93,6 +93,12 @@ final class WindowManager {
     private var animStartTime: CFTimeInterval = 0
     private let animDuration: CFTimeInterval = 0.18
     private var animWindow: AXUIElement?
+    private var animLastWritten: CGRect?
+    private var animEnhancedUIApp: AXUIElement?
+    private var animActivity: NSObjectProtocol?
+    // An app that needs longer than this to apply one AX frame update can't
+    // animate smoothly (Electron, huge editors); such windows jump to the end.
+    private let slowFrameLimit: CFTimeInterval = 0.025
 
     // Size-cycle state: repeating the same snap shortcut on the same window
     // within the timeout steps through a sequence of sizes (Rectangle-style).
@@ -143,11 +149,12 @@ final class WindowManager {
     }
 
     func snap(_ target: SnapTarget, window: AXUIElement, animated: Bool = true) {
-        guard let screen = screenContaining(window: window) else {
+        let frame = currentCocoaFrame(of: window)
+        guard let screen = frame.flatMap(screen(containing:)) ?? NSScreen.main else {
             print("[Glide][snap] no screen for window")
             return
         }
-        apply(target, window: window, screen: screen, animated: animated)
+        apply(target, window: window, from: frame, screen: screen, animated: animated)
     }
 
     /// Snaps onto whichever screen contains `point` (the cursor), so dragging a
@@ -155,18 +162,20 @@ final class WindowManager {
     /// origin screen.
     func snap(_ target: SnapTarget, window: AXUIElement,
               onScreenContaining point: CGPoint, animated: Bool = true) {
+        let frame = currentCocoaFrame(of: window)
         let screen = NSScreen.screens.first { $0.frame.contains(point) }
-            ?? screenContaining(window: window)
+            ?? frame.flatMap(screen(containing:)) ?? NSScreen.main
         guard let screen else { return }
-        apply(target, window: window, screen: screen, animated: animated)
+        apply(target, window: window, from: frame, screen: screen, animated: animated)
     }
 
-    private func apply(_ target: SnapTarget, window: AXUIElement, screen: NSScreen, animated: Bool) {
+    private func apply(_ target: SnapTarget, window: AXUIElement, from startRect: CGRect?,
+                       screen: NSScreen, animated: Bool) {
         let endRect = target.rect(in: screen.visibleFrame)
-        if animated, let startRect = currentCocoaFrame(of: window) {
+        if animated, let startRect {
             animateFrame(window: window, from: startRect, to: endRect)
         } else {
-            setFrame(window, to: endRect)
+            setFrameNow(window, to: endRect)
         }
         // Subtle Force Touch trackpad click on snap. Silently ignored on devices
         // without a haptic trackpad.
@@ -192,9 +201,9 @@ final class WindowManager {
             print("[Glide][display] only one screen")
             return
         }
-        guard let currentScreen = screenContaining(window: window),
-              let currentIdx = screens.firstIndex(of: currentScreen),
-              let windowCocoa = currentCocoaFrame(of: window) else { return }
+        guard let windowCocoa = currentCocoaFrame(of: window),
+              let currentScreen = screen(containing: windowCocoa) ?? NSScreen.main,
+              let currentIdx = screens.firstIndex(of: currentScreen) else { return }
 
         let delta = forward ? 1 : -1
         let nextScreen = screens[(currentIdx + delta + screens.count) % screens.count]
@@ -216,7 +225,7 @@ final class WindowManager {
         if animated {
             animateFrame(window: window, from: windowCocoa, to: target)
         } else {
-            setFrame(window, to: target)
+            setFrameNow(window, to: target)
         }
         NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now)
     }
@@ -224,33 +233,60 @@ final class WindowManager {
     // MARK: animation
 
     private func animateFrame(window: AXUIElement, from start: CGRect, to end: CGRect) {
-        // Cancel any in-flight animation.
-        displayLink?.invalidate()
-        displayLink = nil
+        // Cancel any in-flight animation. A different window is pinned to its
+        // target so it isn't left half-way; the same window just re-targets
+        // from wherever it is now (`start`).
+        if let previous = animWindow, !CFEqual(previous, window) {
+            setFrame(previous, to: animEnd)
+        }
+        stopAnimation()
+
+        // On macOS CADisplayLink is created via NSScreen — not the iOS-style
+        // CADisplayLink(target:selector:) initializer (which is unavailable here).
+        // Use the window's own screen so the animation runs at its refresh rate
+        // (a 120 Hz built-in panel next to a 60 Hz external, say).
+        let startCenter = CGPoint(x: start.midX, y: start.midY)
+        let screen = NSScreen.screens.first { $0.frame.contains(startCenter) } ?? NSScreen.main
+        guard let link = screen?.displayLink(
+            target: self,
+            selector: #selector(tickAnimation(_:))
+        ) else {
+            setFrameNow(window, to: end)
+            return
+        }
 
         animWindow = window
         animStart = start
         animEnd = end
         animStartTime = CACurrentMediaTime()
-
-        // On macOS CADisplayLink is created via NSScreen — not the iOS-style
-        // CADisplayLink(target:selector:) initializer (which is unavailable here).
-        guard let link = NSScreen.main?.displayLink(
-            target: self,
-            selector: #selector(tickAnimation(_:))
-        ) else {
-            setFrame(window, to: end)
-            animWindow = nil
-            return
-        }
+        animLastWritten = nil
+        animEnhancedUIApp = disableEnhancedUI(for: window)
+        // Glide is a background agent, so App Nap may coalesce its timers and
+        // display-link callbacks. Opt out for the few frames of the animation.
+        animActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .latencyCritical],
+            reason: "Window snap animation"
+        )
         link.add(to: .main, forMode: .common)
         displayLink = link
     }
 
+    private func stopAnimation() {
+        displayLink?.invalidate()
+        displayLink = nil
+        animWindow = nil
+        animLastWritten = nil
+        restoreEnhancedUI(animEnhancedUIApp)
+        animEnhancedUIApp = nil
+        if let animActivity {
+            ProcessInfo.processInfo.endActivity(animActivity)
+            self.animActivity = nil
+        }
+    }
+
     @objc private func tickAnimation(_ link: CADisplayLink) {
         guard let window = animWindow else {
-            link.invalidate()
-            displayLink = nil
+            stopAnimation()
             return
         }
         // Interpolate to targetTimestamp (when this frame is actually shown on
@@ -267,14 +303,20 @@ final class WindowManager {
             width: animStart.width + (animEnd.width - animStart.width) * eased,
             height: animStart.height + (animEnd.height - animStart.height) * eased
         )
-        setFrame(window, to: current)
-
         if t >= 1.0 {
             // Pin to exact target — floating point + AX rounding can leave a 1-px gap.
             setFrame(window, to: animEnd)
-            link.invalidate()
-            displayLink = nil
-            animWindow = nil
+            stopAnimation()
+            return
+        }
+
+        let writeStart = CACurrentMediaTime()
+        animLastWritten = setFrame(window, to: current, previous: animLastWritten)
+        if CACurrentMediaTime() - writeStart > slowFrameLimit {
+            // The app can't keep up with per-frame updates; finish in one step
+            // rather than stutter through the rest of the animation.
+            setFrame(window, to: animEnd)
+            stopAnimation()
         }
     }
 
@@ -285,13 +327,42 @@ final class WindowManager {
 
     // MARK: window resolution
 
+    /// Called on every click and scroll-begin anywhere on screen, so the common
+    /// "not on a title bar" case is ruled out via the WindowServer first: AX
+    /// hit-testing is a synchronous round-trip into the app under the cursor
+    /// and would add latency to that app's own clicks and scrolls.
     func titleBarWindow(at cocoaPoint: CGPoint) -> AXUIElement? {
         let axPoint = cocoaToAX(cocoaPoint)
-        guard let window = window(at: axPoint),
+        guard mayBeTitleBar(at: axPoint),
+              let window = window(at: axPoint),
               let frame = axFrame(of: window) else { return nil }
         let titleBar = CGRect(x: frame.minX, y: frame.minY,
                               width: frame.width, height: titleBarHeight)
         return titleBar.contains(axPoint) ? window : nil
+    }
+
+    /// Is `axPoint` in the top `titleBarHeight` of the front-most window under
+    /// it? Uses window bounds and layer only — those need no Screen Recording
+    /// permission (window *names* would, and we never read them).
+    private func mayBeTitleBar(at axPoint: CGPoint) -> Bool {
+        guard let list = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+        ) as? [[String: Any]] else {
+            return true  // can't tell — let the AX check decide
+        }
+        // The list is ordered front to back, so the first hit is the window
+        // actually under the cursor.
+        for info in list {
+            guard let boundsDict = info[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: boundsDict as CFDictionary),
+                  bounds.contains(axPoint),
+                  (info[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
+            // Dock, menu bar, open menus, overlays: never a draggable title bar.
+            let layer = info[kCGWindowLayer as String] as? Int ?? 0
+            guard layer < Int(CGWindowLevelForKey(.dockWindow)) else { return false }
+            return axPoint.y - bounds.minY <= titleBarHeight
+        }
+        return false
     }
 
     // MARK: AX helpers
@@ -315,6 +386,11 @@ final class WindowManager {
     }
 
     private func walkUpToWindow(_ element: AXUIElement) -> AXUIElement? {
+        // Most elements expose their window directly — one round-trip instead
+        // of one per parent level.
+        if let windowRef = copyAttribute(element, kAXWindowAttribute) {
+            return (windowRef as! AXUIElement)
+        }
         var current = element
         for _ in 0..<20 {
             if let roleRef = copyAttribute(current, kAXRoleAttribute),
@@ -356,28 +432,65 @@ final class WindowManager {
         return CGPoint(x: cocoaPoint.x, y: primary.frame.maxY - cocoaPoint.y)
     }
 
-    private func screenContaining(window: AXUIElement) -> NSScreen? {
-        guard let primary = NSScreen.screens.first,
-              let axRect = axFrame(of: window) else {
-            return NSScreen.main
-        }
-        let cocoaY = primary.frame.maxY - axRect.maxY
-        let cocoaCenter = CGPoint(x: axRect.midX, y: cocoaY + axRect.height / 2)
-        return NSScreen.screens.first(where: { $0.frame.contains(cocoaCenter) }) ?? NSScreen.main
+    private func screen(containing cocoaFrame: CGRect) -> NSScreen? {
+        let center = CGPoint(x: cocoaFrame.midX, y: cocoaFrame.midY)
+        return NSScreen.screens.first(where: { $0.frame.contains(center) }) ?? NSScreen.main
     }
 
-    private func setFrame(_ window: AXUIElement, to cocoaRect: CGRect) {
-        guard let primary = NSScreen.screens.first else { return }
+    /// One-shot frame change (no animation), with enhanced UI switched off
+    /// around it.
+    private func setFrameNow(_ window: AXUIElement, to cocoaRect: CGRect) {
+        let app = disableEnhancedUI(for: window)
+        setFrame(window, to: cocoaRect)
+        restoreEnhancedUI(app)
+    }
+
+    /// Writes the frame via AX and returns it in AX coordinates, rounded to
+    /// whole points. With `previous` (an earlier return value), attributes
+    /// that haven't visibly changed are skipped: each write is a synchronous
+    /// round-trip to the target app, and a size write also makes it re-layout.
+    @discardableResult
+    private func setFrame(_ window: AXUIElement, to cocoaRect: CGRect,
+                          previous: CGRect? = nil) -> CGRect? {
+        guard let primary = NSScreen.screens.first else { return nil }
         let axOriginY = primary.frame.maxY - cocoaRect.maxY
         var origin = CGPoint(x: cocoaRect.minX, y: axOriginY)
         var size = cocoaRect.size
+        let written = CGRect(x: origin.x.rounded(), y: origin.y.rounded(),
+                             width: size.width.rounded(), height: size.height.rounded())
         // Size before position: when a window must both shrink and move, sizing
         // it down first keeps it within screen bounds for the position step.
-        if let sizeValue = AXValueCreate(.cgSize, &size) {
+        if written.size != previous?.size, let sizeValue = AXValueCreate(.cgSize, &size) {
             AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, sizeValue)
         }
-        if let posValue = AXValueCreate(.cgPoint, &origin) {
+        if written.origin != previous?.origin, let posValue = AXValueCreate(.cgPoint, &origin) {
             AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, posValue)
         }
+        return written
+    }
+
+    // MARK: enhanced user interface
+
+    // Chromium/Electron apps (and every app while VoiceOver runs) switch on
+    // AXEnhancedUserInterface, which makes them animate each AX resize
+    // themselves — slow, and it fights our animation. Turn it off while we move
+    // the window and back on afterwards (the same trick Rectangle uses).
+    private static let enhancedUIAttribute = "AXEnhancedUserInterface" as CFString
+
+    /// Returns the app element whose flag was switched off, or nil if it was
+    /// already off.
+    private func disableEnhancedUI(for window: AXUIElement) -> AXUIElement? {
+        var pid: pid_t = 0
+        guard AXUIElementGetPid(window, &pid) == .success else { return nil }
+        let app = AXUIElementCreateApplication(pid)
+        guard let ref = copyAttribute(app, Self.enhancedUIAttribute as String),
+              (ref as? Bool) == true else { return nil }
+        AXUIElementSetAttributeValue(app, Self.enhancedUIAttribute, kCFBooleanFalse)
+        return app
+    }
+
+    private func restoreEnhancedUI(_ app: AXUIElement?) {
+        guard let app else { return }
+        AXUIElementSetAttributeValue(app, Self.enhancedUIAttribute, kCFBooleanTrue)
     }
 }

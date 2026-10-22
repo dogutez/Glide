@@ -69,6 +69,15 @@ disables the window actions in the menu.
   cancel callback→display latency. See `WindowManager.tickAnimation`.
 - **`setFrame` sets size *before* position** so a window that must both shrink
   and move stays within screen bounds during the move.
+- **Keep AX off the hot paths.** Every AX call is a synchronous round-trip
+  into another app's main thread. The global click/scroll monitors therefore
+  ask the WindowServer first (`WindowManager.mayBeTitleBar`, bounds + layer
+  only — never window names, which would need Screen Recording) and only
+  hit-test via AX when the cursor really is on a title bar. A global 0.25 s
+  AX messaging timeout (set in `AppDelegate`) stops a hung app from freezing
+  Glide; animations skip unchanged attributes, switch off
+  `AXEnhancedUserInterface` while moving, and jump to the end if the app
+  can't keep up.
 - **The grant is gated everywhere.** New window features must check
   `permission.isTrusted` and disable their menu items when false, mirroring the
   existing actions in `rebuildMenu`.

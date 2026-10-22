@@ -19,6 +19,7 @@ final class EdgeSnapController {
 
     private var downMonitor: Any?
     private var pollTimer: Timer?
+    private var dragActivity: NSObjectProtocol?
 
     private var draggedWindow: AXUIElement?
     private var startPoint: CGPoint = .zero
@@ -64,6 +65,12 @@ final class EdgeSnapController {
         }
         RunLoop.main.add(timer, forMode: .common)
         pollTimer = timer
+        // Keep App Nap from coalescing the poll timer, so the zone preview
+        // tracks the cursor without lag.
+        dragActivity = ProcessInfo.processInfo.beginActivity(
+            options: [.userInitiated, .latencyCritical],
+            reason: "Quick Split drag"
+        )
     }
 
     private func poll() {
@@ -92,6 +99,10 @@ final class EdgeSnapController {
     private func endDrag(snap: Bool) {
         pollTimer?.invalidate()
         pollTimer = nil
+        if let dragActivity {
+            ProcessInfo.processInfo.endActivity(dragActivity)
+            self.dragActivity = nil
+        }
         let zone = currentZone
         let window = draggedWindow
         let armedNow = armed

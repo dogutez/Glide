@@ -74,7 +74,7 @@ enum HotkeyActionID: String, CaseIterable, Codable {
     case snapLeftTwoThirds, snapRightTwoThirds
     case snapCenter, snapFull
     case moveNextDisplay, movePreviousDisplay
-    case cycleWindow, saveLayout, restoreLayout
+    case cycleWindow
     case hideOthers, hideAll
 
     var action: HotkeyAction {
@@ -97,8 +97,6 @@ enum HotkeyActionID: String, CaseIterable, Codable {
         case .moveNextDisplay:    return .moveToNextDisplay
         case .movePreviousDisplay: return .moveToPreviousDisplay
         case .cycleWindow:        return .cycleWindow
-        case .saveLayout:         return .saveLayout
-        case .restoreLayout:      return .restoreLayout
         case .hideOthers:         return .hideOthers
         case .hideAll:            return .hideAll
         }
@@ -124,8 +122,6 @@ enum HotkeyActionID: String, CaseIterable, Codable {
         case .moveNextDisplay:     return "Move to Next Display"
         case .movePreviousDisplay: return "Move to Previous Display"
         case .cycleWindow:         return "Cycle to Next Window"
-        case .saveLayout:          return "Save Layout"
-        case .restoreLayout:       return "Restore Layout"
         case .hideOthers:          return "Hide Other Apps"
         case .hideAll:             return "Hide All Apps"
         }
@@ -163,8 +159,6 @@ enum HotkeyActionID: String, CaseIterable, Codable {
             .snapFull:           sc(kVK_Return),
             .moveNextDisplay:    sc(kVK_ANSI_M),
             .cycleWindow:        sc(kVK_Tab),
-            .saveLayout:         sc(kVK_ANSI_S),
-            .restoreLayout:      sc(kVK_ANSI_R),
         ]
     }
 }

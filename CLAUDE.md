@@ -16,9 +16,10 @@ Glide is a SwiftUI **macOS** menu-bar app (not iOS, `LSUIElement = YES`, no Dock
 | `AppSettings.swift` | `@Observable` preferences (UserDefaults-backed). Currently just `reverseScrolling` Bool. **Named `AppSettings` — never `Settings`** (collides with SwiftUI's `Settings<Content>` Scene) |
 | `WindowManager.swift` | `SnapTarget` enum (halves/quadrants/full/center) + AX-driven window placement. Finds the screen containing the window for multi-monitor correctness |
 | `GestureMonitor.swift` | `NSEvent.addGlobalMonitorForEvents(matching: .scrollWheel)` → angle-based swipe recognition (25°-65° → quadrant; long up → full; long down → center). Triggers only when gesture starts on a title-bar region (top 30pt of the window under cursor) |
-| `HotkeyManager.swift` | `NSEvent.addGlobalMonitorForEvents(matching: .keyDown)` filtered to exactly Ctrl+Opt. Emits `HotkeyAction` (snap / move-display / cycle / save-restore-layout). **Not Carbon** — `Carbon.InstallEventHandler` interfered with menu bar activation in our setup |
+| `HotkeyManager.swift` | Registers the user's bindings as Carbon hotkeys (`RegisterEventHotKey`), which *consume* the key event. Emits `HotkeyAction` (snap / move-display / cycle / hide apps). Carbon is safe now that the menu is a plain `NSStatusItem` — the old activation hang was `MenuBarExtra`, not Carbon |
+| `Shortcut.swift` / `ShortcutStore.swift` | `Shortcut` value type + `HotkeyActionID` (every bindable action and its default key); `ShortcutStore` persists the user's bindings to UserDefaults |
+| `EdgeSnapController.swift` | "Quick Split": drag a window's title bar to a screen edge/corner to snap it, with a translucent zone preview |
 | `WindowCycler.swift` | Window-level Cmd-Tab alternative — enumerates every regular app's standard windows, raises the next in a stable order. No previews (those need Screen Recording) |
-| `LayoutManager.swift` | Save/restore all window positions. Snapshots `(bundleID, title, AX-frame)` to UserDefaults; restore matches by bundleID+title, best-effort |
 | `PreferencesView.swift` | SwiftUI preferences UI, shown in an AppKit `NSWindow` via `NSHostingController` (opened from the menu). Launch-at-login (`SMAppService`), reverse scrolling, animate toggle, shortcut reference |
 
 **Default global hotkeys** (Ctrl+Opt modifier):
@@ -27,7 +28,6 @@ Glide is a SwiftUI **macOS** menu-bar app (not iOS, `LSUIElement = YES`, no Dock
 - `1/2/3` left/middle/right third, `4/5` left/right two-thirds
 - `C` center (60×60), `Return` fill screen
 - `M` move window to next display (cycles), `Tab` cycle to next window
-- `S` save layout, `R` restore layout
 
 **Trackpad gestures** (on a window's title bar): 2-finger swipe → snap (directional → halves, diagonal → quadrants, long up → full, long down → center). `⌘` held + horizontal swipe → move window to the adjacent display.
 

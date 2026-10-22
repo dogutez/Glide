@@ -25,10 +25,6 @@ final class ShortcutStore {
     /// like ⌘Space). Written by HotkeyManager; read by the UI to flag them.
     var failedRegistrations: Set<HotkeyActionID> = []
 
-    /// Clears any layout holding a combo (returns its name) so an action can
-    /// steal it. Set by AppDelegate.
-    @ObservationIgnored var externalConflictResolver: ((Shortcut) -> String?)?
-
     init() {
         bindings = Self.load() ?? HotkeyActionID.defaultBindings
     }
@@ -45,9 +41,8 @@ final class ShortcutStore {
 
     func shortcut(for id: HotkeyActionID) -> Shortcut? { bindings[id] }
 
-    /// Assigns `shortcut` to `id`, stealing the combo from any other action or
-    /// layout that holds it. Returns the displaced item's display name for a
-    /// "(was X)" note.
+    /// Assigns `shortcut` to `id`, stealing the combo from any other action
+    /// that holds it. Returns the displaced action's title for a "(was X)" note.
     @discardableResult
     func assign(_ shortcut: Shortcut, to id: HotkeyActionID) -> String? {
         var displaced: String?
@@ -56,22 +51,9 @@ final class ShortcutStore {
             displaced = other.title
         }
         bindings[id] = shortcut
-        if let stolenLayout = externalConflictResolver?(shortcut), displaced == nil {
-            displaced = stolenLayout
-        }
         save()
         onChange?()
         return displaced
-    }
-
-    /// Clears whichever action holds `shortcut` (returns its title). Lets a
-    /// layout steal a combo from an action.
-    func clearActionWithShortcut(_ shortcut: Shortcut) -> String? {
-        guard let entry = bindings.first(where: { $0.value == shortcut }) else { return nil }
-        bindings[entry.key] = nil
-        save()
-        onChange?()
-        return entry.key.title
     }
 
     func clear(_ id: HotkeyActionID) {

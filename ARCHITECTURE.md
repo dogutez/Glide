@@ -1,7 +1,7 @@
 # Glide — Architecture
 
 A macOS menu-bar window manager (snap, multi-display moves, window cycling,
-layout save/restore) driven by keyboard shortcuts and trackpad gestures.
+drag-to-edge Quick Split) driven by keyboard shortcuts and trackpad gestures.
 No dock icon, no main window — the entire UI lives in an `NSStatusItem`.
 
 > Build/signing/distribution lives in `DISTRIBUTION.md`. Hard constraints
@@ -24,11 +24,11 @@ No dock icon, no main window — the entire UI lives in an `NSStatusItem`.
               · builds the status-item menu
               · perform(action) dispatch
                        │
-        ┌──────────────┼───────────────┬───────────────┐
-        ▼              ▼               ▼               ▼
-  WindowManager   WindowCycler   LayoutManager   AccessibilityPermission
-  (snap / move /  (raise next    (save/restore   (AXIsProcessTrusted
-   animate)        window)        all windows)    gate + menu icon)
+        ┌──────────────┼───────────────┐
+        ▼              ▼               ▼
+  WindowManager   WindowCycler   AccessibilityPermission
+  (snap / move /  (raise next    (AXIsProcessTrusted
+   animate)        window)        gate + menu icon)
         │                                                ▲
         └─ reads AppSettings (animateSnap,               │
            reverseScrolling) ──── PreferencesView ───────┘
@@ -52,7 +52,7 @@ disables the window actions in the menu.
 | `ShortcutStore.swift` | `@Observable` source of truth for `[HotkeyActionID: Shortcut]`, persisted as versioned JSON in `UserDefaults`. `assign` steals a combo from any conflicting action; `suspend`/`resume` gate registration during recording. |
 | `WindowManager.swift` | The core. Snaps/moves the focused (or a given) window via AX, with a `CADisplayLink`-driven eased animation. Defines `SnapTarget` and its geometry. |
 | `WindowCycler.swift` | Window-level alternative to ⌘-Tab: raises the next standard window across all regular apps in a stable order. |
-| `LayoutManager.swift` | Snapshots every window's frame to `UserDefaults` (keyed by bundle ID + title) and restores them best-effort. |
+| `EdgeSnapController.swift` | Quick Split: arms on a global mouse-down over a title bar, polls the cursor until release, shows a zone overlay near screen edges/corners and snaps on release. |
 | `AccessibilityPermission.swift` | `@Observable` wrapper around `AXIsProcessTrusted()`; drives the menu icon and gating. |
 | `AppSettings.swift` | `@Observable` prefs (`reverseScrolling`, `animateSnap`), persisted to `UserDefaults`. Must never be named `Settings`. |
 | `PreferencesView.swift` | The only SwiftUI view. Toggles + an editable shortcut recorder (one row per `HotkeyActionID`) + launch-at-login via `SMAppService`. |
@@ -72,8 +72,6 @@ disables the window actions in the menu.
 - **The grant is gated everywhere.** New window features must check
   `permission.isTrusted` and disable their menu items when false, mirroring the
   existing actions in `rebuildMenu`.
-- **Layout matching is by `(bundleID, title)`** — windows whose titles changed
-  between save and restore are silently skipped. There's no window-ID identity.
 - **Signing is certificate-based, not ad-hoc**, so the Accessibility grant
   survives rebuilds (see `DISTRIBUTION.md`). Don't revert `build-release.sh` to
   `codesign --sign -`.

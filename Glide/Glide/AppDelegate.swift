@@ -16,7 +16,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var hotkeys: HotkeyManager!
     private var edgeSnap: EdgeSnapController!
     private let windowCycler = WindowCycler()
-    private let layoutManager = LayoutManager()
     private var preferencesWindow: NSWindow?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -35,26 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hotkeys.onAction = { [weak self] action in
             self?.perform(action)
         }
-        hotkeys.layoutShortcuts = { [weak self] in
-            self?.layoutManager.namedLayouts.compactMap { layout in
-                layout.shortcut.map { (layout.id, $0) }
-            } ?? []
-        }
-        hotkeys.onLayoutHotkey = { [weak self] id in
-            self?.layoutManager.restore(id: id)
-        }
         hotkeys.start()
-
-        // Cross-namespace shortcut stealing + re-register on layout changes.
-        shortcuts.externalConflictResolver = { [weak self] sc in
-            self?.layoutManager.clearLayoutWithShortcut(sc)
-        }
-        layoutManager.actionConflictResolver = { [weak self] sc in
-            self?.shortcuts.clearActionWithShortcut(sc)
-        }
-        layoutManager.shortcutsChanged = { [weak self] in
-            self?.hotkeys.refresh()
-        }
 
         edgeSnap = EdgeSnapController(windows: windows, settings: settings)
         edgeSnap.start()
@@ -75,10 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windows.moveToAdjacentDisplay(forward: false, animated: settings.animateSnap)
         case .cycleWindow:
             windowCycler.cycleForward()
-        case .saveLayout:
-            layoutManager.saveLayout()
-        case .restoreLayout:
-            layoutManager.restoreLayout()
         case .hideOthers:
             hideOtherApps()
         case .hideAll:
@@ -201,21 +177,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
-        addAction(to: menu, title: "Save Layout",
-                  selector: #selector(handleSaveLayout), enabled: trusted,
-                  actionID: .saveLayout)
-        addAction(to: menu, title: "Restore Layout",
-                  selector: #selector(handleRestoreLayout),
-                  enabled: trusted && layoutManager.hasSavedLayout,
-                  actionID: .restoreLayout)
-
-        let layoutsItem = NSMenuItem(title: "Layouts", action: nil, keyEquivalent: "")
-        layoutsItem.submenu = buildLayoutsMenu()
-        layoutsItem.isEnabled = trusted
-        menu.addItem(layoutsItem)
-
-        menu.addItem(.separator())
-
         // Hiding apps doesn't need Accessibility, so these stay enabled.
         addAction(to: menu, title: "Hide Other Apps",
                   selector: #selector(handleHideOthers), actionID: .hideOthers)
@@ -281,51 +242,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return result
     }
 
-    private func buildLayoutsMenu() -> NSMenu {
-        let menu = NSMenu()
-        let saveItem = NSMenuItem(title: "Save Current Layout as…",
-                                  action: #selector(handleSaveLayoutAs), keyEquivalent: "")
-        saveItem.target = self
-        menu.addItem(saveItem)
-        menu.addItem(.separator())
-
-        if layoutManager.namedLayouts.isEmpty {
-            let empty = NSMenuItem(title: "No saved layouts", action: nil, keyEquivalent: "")
-            empty.isEnabled = false
-            menu.addItem(empty)
-        } else {
-            // Click a layout to restore it directly. Rename/delete/shortcut live
-            // in Preferences → Layouts.
-            for layout in layoutManager.namedLayouts {
-                let item = NSMenuItem(title: layout.name,
-                                      action: #selector(handleRestoreNamed(_:)), keyEquivalent: "")
-                item.target = self
-                item.representedObject = layout.id
-                if let attr = shortcutHintTitle(layout.name, shortcut: layout.shortcut, tabStop: 200) {
-                    item.attributedTitle = attr
-                }
-                menu.addItem(item)
-            }
-        }
-        return menu
-    }
-
-    /// Modal single-line text prompt. Returns nil if cancelled or empty.
-    private func promptForText(_ message: String, defaultValue: String = "") -> String? {
-        let alert = NSAlert()
-        alert.messageText = message
-        alert.addButton(withTitle: "OK")
-        alert.addButton(withTitle: "Cancel")
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 24))
-        field.stringValue = defaultValue
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-        let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
-    }
-
     // MARK: menu actions
 
     @objc private func handleSnap(_ sender: NSMenuItem) {
@@ -345,30 +261,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowCycler.cycleForward()
     }
 
-    @objc private func handleSaveLayoutAs() {
-        guard let name = promptForText("Save current window layout as:") else { return }
-        layoutManager.saveCurrentAs(name: name)
-    }
-
-    @objc private func handleRestoreNamed(_ sender: NSMenuItem) {
-        guard let id = sender.representedObject as? UUID else { return }
-        layoutManager.restore(id: id)
-    }
-
     @objc private func handleHideOthers() {
         hideOtherApps()
     }
 
     @objc private func handleHideAll() {
         hideAllApps()
-    }
-
-    @objc private func handleSaveLayout() {
-        layoutManager.saveLayout()
-    }
-
-    @objc private func handleRestoreLayout() {
-        layoutManager.restoreLayout()
     }
 
     @objc private func handleRequestAccess() {
@@ -400,7 +298,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func handlePreferences() {
         if preferencesWindow == nil {
-            let view = PreferencesView(settings: settings, shortcuts: shortcuts, layoutManager: layoutManager)
+            let view = PreferencesView(settings: settings, shortcuts: shortcuts)
             let host = NSHostingController(rootView: view)
             let window = NSWindow(contentViewController: host)
             window.title = "Glide Preferences"

@@ -8,7 +8,7 @@
 
 Glide is a **macOS menu-bar window manager**. It lets you reposition and resize
 windows of *other* apps — snap them to halves/quadrants/thirds, move them across
-displays, cycle focus, and save/restore window layouts — driven by **keyboard
+displays, cycle focus, and hide other apps — driven by **keyboard
 shortcuts** and **trackpad gestures**. It has no dock icon and no main window;
 its entire UI is a status-bar menu plus a small Preferences window.
 
@@ -71,10 +71,12 @@ any feature comparison:
   window-level alternative to ⌘-Tab). **No previews** (that would need Screen
   Recording) — it simply raises the next window in a stable order.
 
-**Layouts:**
-- Save the current position/size of all windows and restore them later. Matching
-  on restore is best-effort, keyed by app bundle ID + window title. **Single
-  saved layout** (no named/multiple layouts yet).
+**Quick Split:**
+- Drag a window by its title bar to a screen edge or corner to snap it there,
+  with a translucent preview of the target zone.
+
+**App hiding:**
+- Hide Other Apps / Hide All Apps, each bindable to a shortcut.
 
 **Other:**
 - Launch at login (via `SMAppService`).
@@ -94,9 +96,8 @@ any feature comparison:
 ## Current limitations / non-goals
 
 - No window **thumbnails/previews** anywhere (no Screen Recording — by design).
-- No **drag-to-edge** snapping yet (snapping is via keyboard/trackpad-swipe).
 - No **tiling/auto-layout engine** (manual snapping only).
-- Single saved layout; no named layout sets.
+- No saved window layouts (the feature was removed).
 - Cycle window switcher has no UI/preview.
 - Intel Macs unsupported.
 
@@ -104,9 +105,6 @@ any feature comparison:
 
 Being built or actively evaluated, all constrained to Accessibility-only (no
 Screen Recording):
-- **Hide Others / Hide All** apps via a bindable shortcut.
-- **Quick Split**: drag a window toward a screen edge/corner to snap it, with a
-  translucent zone preview.
 - **Dock window actions**: hover a Dock icon to list that app's windows (by
   title, no thumbnails) and close them — feasibility confirmed with AX only.
 
